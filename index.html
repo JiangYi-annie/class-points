@@ -370,6 +370,25 @@ select.input{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xml
 .motivate b{color:#fff;font-weight:750}
 .motivate .ic{color:var(--gold);margin-right:4px}
 
+/* 历次作业成绩（两列） */
+.hw-history-box{padding:18px 26px 6px}
+.hwh-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:4px}
+.hwh-head h3{font-size:12px;color:var(--faint);font-weight:600;letter-spacing:.05em}
+.hwh-count{font-size:11px;color:var(--faint)}
+.hwh-legend{font-size:11.5px;color:var(--faint);margin-bottom:10px}
+.hwh-list{max-height:360px;overflow:auto;border:1px solid var(--line);border-radius:12px;background:rgba(4,8,16,.28)}
+.hwh-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:center;padding:9px 14px;border-bottom:1px solid rgba(255,255,255,.055);min-height:40px}
+.hwh-row:last-child{border-bottom:none}
+.hwh-name{font-size:13px;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hwh-name b{color:var(--muted);font-weight:600;font-size:11.5px;margin-right:8px;font-variant-numeric:tabular-nums}
+.hwh-score{font-size:13px;font-weight:750;white-space:nowrap;font-variant-numeric:tabular-nums;text-align:right}
+.hwh-score i{font-style:normal;font-size:11.5px;color:var(--muted);font-weight:500;margin-left:2px}
+.hwh-score.aplus{color:var(--gold)}
+.hwh-score.a{color:var(--ok)}
+.hwh-score.aminus{color:#9fc0ff}
+.hwh-score.submitted{color:var(--warn)}
+.hwh-score.none{color:var(--faint);font-weight:500}
+
 /* ============ 教师控制台 ============ */
 .admin{max-width:1180px;margin:0 auto;padding:clamp(18px,2.6vh,32px) clamp(14px,3vw,30px) 90px}
 .admin-head{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;flex-wrap:wrap}
@@ -546,6 +565,64 @@ select.input{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xml
 .btn.ok{background:linear-gradient(180deg,#2fd08f,#18a066);border-color:rgba(61,220,151,.5);box-shadow:0 12px 30px -14px rgba(61,220,151,.8)}
 .btn.ok:hover{filter:brightness(1.06)}
 
+/* ============ 作业等级评分 ============ */
+.grade-legend{display:flex;gap:8px;flex-wrap:wrap;margin:2px 0 12px}
+.gl-item{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:8px;font-size:12px;color:var(--muted);background:rgba(255,255,255,.05);border:1px solid var(--line)}
+.gl-item b{font-size:12.5px;color:var(--ink)}
+.gl-item.aplus{border-color:rgba(255,201,74,.3);background:rgba(255,201,74,.08)}
+.gl-item.aplus b{color:var(--gold)}
+.gl-item.a{border-color:rgba(61,220,151,.28);background:rgba(61,220,151,.07)}
+.gl-item.a b{color:var(--ok)}
+.gl-item.aminus{border-color:rgba(91,140,255,.3);background:rgba(91,140,255,.08)}
+.gl-item.aminus b{color:#9fc0ff}
+.gl-item.submitted{border-color:rgba(255,180,84,.3);background:rgba(255,180,84,.07)}
+.gl-item.submitted b{color:var(--warn)}
+.grade-tools{display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.grade-tools .field{gap:4px}
+.grade-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:4px 0 12px}
+.grade-row{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:9px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.05);min-width:0}
+.gr-id{font-size:15px;font-weight:800;font-variant-numeric:tabular-nums;min-width:28px;text-align:center}
+.gr-btns{display:flex;gap:4px;flex:1;min-width:0}
+.gbtn{flex:1;min-width:0;padding:5px 2px;border-radius:7px;border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--muted);font-size:11.5px;font-weight:650;transition:.12s}
+.gbtn:hover{border-color:var(--line-2);color:var(--ink)}
+.gbtn.aplus{background:rgba(255,201,74,.06);border-color:rgba(255,201,74,.18);color:#e3c16b}
+.gbtn.a{background:rgba(61,220,151,.06);border-color:rgba(61,220,151,.18);color:#8ce9c3}
+.gbtn.aminus{background:rgba(91,140,255,.06);border-color:rgba(91,140,255,.2);color:#a9c4ff}
+.gbtn.submitted{background:rgba(255,180,84,.06);border-color:rgba(255,180,84,.18);color:#e8bd84}
+.gbtn.on{color:#fff;border-color:transparent}
+.gbtn.aplus.on{background:linear-gradient(180deg,#f5c451,#d99a08);color:#2b1c00}
+.gbtn.a.on{background:linear-gradient(180deg,#2fd08f,#18a066)}
+.gbtn.aminus.on{background:linear-gradient(180deg,#5b8cff,#3f6ff0)}
+.gbtn.submitted.on{background:linear-gradient(180deg,#e8a14b,#c47a1f);color:#2a1800}
+.gbtn.none.on{background:rgba(255,255,255,.16);color:var(--ink)}
+.preview .gp{font-weight:650}
+.preview .gp.aplus{color:var(--gold)}
+.preview .gp.a{color:var(--ok)}
+.preview .gp.aminus{color:#9fc0ff}
+.preview .gp.submitted{color:var(--warn)}
+.preview .gp.none{color:var(--faint)}
+.grade-bar{display:flex;height:8px;border-radius:5px;overflow:hidden;background:rgba(255,255,255,.06);margin-bottom:7px}
+.grade-bar i{display:block;height:100%;transition:width .3s}
+.grade-bar .aplus{background:var(--gold)}
+.grade-bar .a{background:var(--ok)}
+.grade-bar .aminus{background:var(--blue)}
+.grade-bar .submitted{background:var(--warn)}
+.grade-bar .none{background:rgba(255,255,255,.14)}
+.grade-sum{font-size:12.5px;color:var(--muted);line-height:1.7}
+.grade-savebar{position:sticky;bottom:8px;z-index:6;margin-top:10px;padding:8px 10px;border-radius:12px;background:rgba(10,15,26,.92);border:1px solid var(--line-2);backdrop-filter:blur(10px);box-shadow:0 12px 30px -14px #000}
+@media(min-width:1100px){.grade-grid{grid-template-columns:repeat(3,1fr)}}
+.grade-scale{display:flex;gap:10px;flex-wrap:wrap}
+.gs-item{display:flex;align-items:center;gap:6px;padding:4px 8px;border-radius:9px;background:rgba(255,255,255,.04);border:1px solid var(--line)}
+.gs-item b{font-size:12.5px;color:var(--muted);min-width:22px}
+.gs-item input{width:72px;padding:6px 8px;font-size:13px}
+
+/* 最近作业等级 */
+.rc.g3 .dot{color:#2b1c00;background:linear-gradient(145deg,#ffe08a,#f5b301);border-color:rgba(255,201,74,.6);font-size:11.5px;font-weight:800}
+.rc.g2 .dot{color:#04281a;background:linear-gradient(145deg,#6ef0b8,#2bbd82);border-color:rgba(61,220,151,.5);font-size:11.5px;font-weight:800}
+.rc.g1 .dot{color:#031a4a;background:linear-gradient(145deg,#a8c4ff,#5b8cff);border-color:rgba(91,140,255,.5);font-size:11.5px;font-weight:800}
+.rc.g05 .dot{color:#2a1800;background:linear-gradient(145deg,#ffd29a,#e8a14b);border-color:rgba(255,180,84,.5);font-size:11.5px;font-weight:800}
+.rc.g0 .dot{color:var(--faint);background:rgba(255,255,255,.04);border-color:var(--line);font-size:11.5px;font-weight:700}
+
 /* ============ 提示 ============ */
 .toasts{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:80;display:flex;flex-direction:column;gap:8px;align-items:center;width:min(92vw,460px);pointer-events:none}
 .toast{
@@ -624,6 +701,10 @@ select.input{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xml
   .stat:nth-child(1),.stat:nth-child(2){border-bottom:1px solid var(--line)}
   .recent-box{padding:15px 18px 4px}
   .motivate{margin:14px 18px 18px}
+  .hw-history-box{padding:15px 18px 6px}
+  .hwh-row{padding:8px 11px;gap:10px}
+  .hwh-name{font-size:12.5px}
+  .hwh-score{font-size:12.5px}
   .admin{padding-left:12px;padding-right:12px}
   .admin-quick{width:100%;overflow-x:auto}
   .panel{padding:16px}
@@ -650,6 +731,12 @@ select.input{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xml
   .roll-foot{flex-direction:column;align-items:stretch;text-align:center}
   .scan-nav{flex-direction:column}
   .scan-nav .btn{width:100%}
+  .grade-grid{grid-template-columns:1fr}
+  .grade-row{padding:6px 8px;gap:10px}
+  .gr-id{font-size:16px}
+  .gbtn{padding:8px 2px;font-size:12.5px;border-radius:8px}
+  .grade-tools{flex-direction:column;align-items:stretch}
+  .grade-tools .field{width:100%}
 }
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.001ms !important;animation-iteration-count:1 !important;transition-duration:.001ms !important;scroll-behavior:auto !important}

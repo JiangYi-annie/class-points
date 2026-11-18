@@ -21,6 +21,47 @@
   };
   const collator = new Intl.Collator('zh-Hans-CN', { numeric: true, sensitivity: 'base' });
   const STAR_LABEL = { homework: '作业之星', notes: '笔记之星' };
+  const GRADE_DEFS = [
+    { key: 'aplus', label: 'A+' },
+    { key: 'a', label: 'A' },
+    { key: 'aminus', label: 'A-' },
+    { key: 'submitted', label: '提交' },
+    { key: 'none', label: '未交' },
+  ];
+  const DEFAULT_SCALE = { aplus: 3, a: 2, aminus: 1, submitted: 0.5 };
+
+  function normalizeScale(raw) {
+    const s = raw && typeof raw === 'object' ? raw : {};
+    return {
+      aplus: clamp(num(s.aplus, 3), 0, 1000),
+      a: clamp(num(s.a, 2), 0, 1000),
+      aminus: clamp(num(s.aminus, 1), 0, 1000),
+      submitted: clamp(num(s.submitted, 0.5), 0, 1000),
+    };
+  }
+  function fmtPts(n) {
+    const v = Number(n) || 0;
+    return Number.isInteger(v) ? String(v) : v.toFixed(1);
+  }
+  function gradePoints(scale, key) {
+    if (!key || key === 'none') return 0;
+    return Number(scale[key]) || 0;
+  }
+  function gradeLabelForPoints(scale, pts) {
+    if (!pts || pts <= 0) return '—';
+    for (const g of GRADE_DEFS) {
+      if (g.key === 'none') continue;
+      if (Math.abs(Number(scale[g.key]) - pts) < 1e-9) return g.label;
+    }
+    return fmtPts(pts);
+  }
+  function gradeBucket(scale, pts) {
+    if (!pts || pts <= 0) return 'g0';
+    if (Math.abs(pts - scale.aplus) < 1e-9) return 'g3';
+    if (Math.abs(pts - scale.a) < 1e-9) return 'g2';
+    if (Math.abs(pts - scale.aminus) < 1e-9) return 'g1';
+    return 'g05';
+  }
 
   const ICON = {
     flame: '<svg class="ic" viewBox="0 0 24 24"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>',
@@ -126,12 +167,23 @@
     const id = str(raw.id);
     const date = str(raw.date);
     if (!id || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+    const scores = {};
+    if (raw.scores && typeof raw.scores === 'object' && !Array.isArray(raw.scores)) {
+      for (const [sid, pts] of Object.entries(raw.scores)) {
+        const key = str(sid);
+        const v = num(pts, null);
+        if (key && v != null && v > 0) scores[key] = clamp(v, 0, 1000);
+      }
+    } else if (Array.isArray(raw.completed)) {
+      // 兼容旧格式：completed + 统一 points
+      const p = clamp(num(raw.points, 2), 0, 1000);
+      if (p > 0) for (const sid of new Set(raw.completed.map(String).filter(Boolean))) scores[sid] = p;
+    }
     return {
       id,
       date,
       title: str(raw.title) || '作业',
-      points: clamp(num(raw.points, 2), 0, 1000),
-      completed: Array.isArray(raw.completed) ? Array.from(new Set(raw.completed.map(String).filter(Boolean))) : [],
+      scores,
       createdAt: str(raw.createdAt) || nowISO(),
     };
   }
@@ -189,6 +241,7 @@
       settings: {
         homeworkPoints: clamp(num(settings.homeworkPoints, 2), 0, 1000),
         classPoints: clamp(num(settings.classPoints, 1), 0, 1000),
+        gradeScale: normalizeScale(settings.gradeScale),
       },
       students,
       homework,
@@ -206,7 +259,7 @@
       meta: { ...d.meta },
       settings: { ...d.settings },
       students: d.students.slice(),
-      homework: d.homework.map((h) => ({ ...h, completed: h.completed.slice() })),
+      homework: d.homework.map((h) => ({ ...h, scores: { ...h.scores } })),
       classLog: d.classLog.map((e) => ({ ...e })),
       stars: {
         homework: (d.stars.homework || []).map((e) => ({ ...e, ids: e.ids.slice() })),
@@ -248,6 +301,7 @@
         d.settings = { ...d.settings, ...(op.patch || {}) };
         d.settings.homeworkPoints = clamp(num(d.settings.homeworkPoints, 2), 0, 1000);
         d.settings.classPoints = clamp(num(d.settings.classPoints, 1), 0, 1000);
+        d.settings.gradeScale = normalizeScale({ ...d.settings.gradeScale, ...((op.patch && op.patch.gradeScale) || {}) });
         break;
       case 'meta.patch':
         d.meta = { ...d.meta, ...(op.patch || {}) };
@@ -260,6 +314,7 @@
         d.settings = { ...d.settings, ...(op.settings || {}) };
         d.settings.homeworkPoints = clamp(num(d.settings.homeworkPoints, 2), 0, 1000);
         d.settings.classPoints = clamp(num(d.settings.classPoints, 1), 0, 1000);
+        d.settings.gradeScale = normalizeScale({ ...d.settings.gradeScale, ...((op.settings && op.settings.gradeScale) || {}) });
         break;
       case 'clear':
         d.homework = [];
@@ -303,12 +358,12 @@
    * ============================================================ */
   function compute(data) {
     const hw = data.homework.slice().sort(hwCompare);
-    const hwSets = hw.map((h) => new Set(h.completed));
+    const hwSets = hw.map((h) => new Set(Object.entries(h.scores || {}).filter(([, p]) => p > 0).map(([id]) => id)));
     const today = todayISO();
     const rows = data.students.map((id) => ({
       id, hwPts: 0, hwCount: 0, streak: 0, best: 0,
       classPts: 0, classCount: 0, todayPts: 0, todayCount: 0,
-      total: 0, totalRank: 0, hwRank: 0, rate: 0, recent: [], lastDate: '',
+      total: 0, totalRank: 0, hwRank: 0, rate: 0, history: [], lastDate: '',
     }));
     const byId = new Map(rows.map((r) => [r.id, r]));
 
@@ -324,25 +379,21 @@
     }
 
     let completions = 0;
-    hw.forEach((h, i) => {
-      for (const id of hwSets[i]) {
+    hw.forEach((h) => {
+      for (const [id, pts] of Object.entries(h.scores || {})) {
         const r = byId.get(id);
-        if (!r) continue;
-        r.hwPts += h.points;
+        if (!r || !(pts > 0)) continue;
+        r.hwPts += pts;
         r.hwCount += 1;
         completions += 1;
         if (h.date > r.lastDate) r.lastDate = h.date;
       }
     });
 
-    const recentHw = hw.slice(-6).reverse();
     for (const r of rows) {
       r.total = r.hwPts + r.classPts;
       r.rate = hw.length ? r.hwCount / hw.length : 0;
-      r.recent = recentHw.map((h, idx) => {
-        const hwIndex = hw.length - 1 - idx;
-        return { date: h.date, title: h.title, ok: hwSets[hwIndex].has(r.id) };
-      });
+      r.history = hw.map((h) => ({ date: h.date, title: h.title, points: Number(h.scores[r.id]) || 0 }));
       let k = hw.length - 1;
       while (k >= 0 && hwSets[k].has(r.id)) { r.streak += 1; k -= 1; }
       let run = 0;
@@ -361,7 +412,7 @@
     hwSorted.forEach((r, i) => { r.hwRank = i + 1; });
 
     const last = hw.length ? hw[hw.length - 1] : null;
-    const lastDone = last ? last.completed.filter((id) => byId.has(id)).length : 0;
+    const lastDone = last ? Object.entries(last.scores || {}).filter(([id, p]) => p > 0 && byId.has(id)).length : 0;
     const avgRate = hw.length ? completions / (data.students.length * hw.length) : 0;
 
     return {
@@ -391,6 +442,8 @@
   let connEditing = false;
   let apiIssue = null;
   let scoreAmt = null;
+  let gradeDraft = {};
+  let gradeEditingId = '';
   let roll = null;
   let rolling = false;
   let rollTimer = null;
@@ -912,7 +965,7 @@
       <div class="pc-head"><span class="medal">${place}</span><span class="pc-place">第 ${place} 名</span>${streak}</div>
       <div class="pc-id">${esc(s.id)}</div>
       <div class="pc-metric"><b>${s.hwCount}</b><i>次作业</i></div>
-      <div class="pc-foot"><span>作业积分 <b>${s.hwPts}</b></span><span>提交率 <b>${pct(s.rate)}</b></span></div>
+      <div class="pc-foot"><span>作业积分 <b>${fmtPts(s.hwPts)}</b></span><span>提交率 <b>${pct(s.rate)}</b></span></div>
     </article>`;
   }
 
@@ -924,13 +977,14 @@
       <span class="rrank">${place}</span>
       <span class="rid">${esc(s.id)}</span>
       <span class="rmeta">${s.hwCount} 次作业 <span class="rdot">·</span> <span class="rflame">${streak}</span> <span class="rdot">·</span> 提交率 ${pct(s.rate)}</span>
-      <span class="rscore">${s.hwPts}<small>分</small></span>
+      <span class="rscore">${fmtPts(s.hwPts)}<small>分</small></span>
     </article>`;
   }
 
   function boardFoot() {
+    const sc = state.settings.gradeScale;
     return `<footer class="board-foot">
-      <p class="legend"><b>只显示学号，不记录姓名</b> · 作业积分 = 每次完成 +${state.settings.homeworkPoints} 分 · 同分按课堂表现与连击排序</p>
+      <p class="legend"><b>只显示学号，不记录姓名</b> · 作业积分：A+ ${fmtPts(sc.aplus)} · A ${fmtPts(sc.a)} · A- ${fmtPts(sc.aminus)} · 提交 ${fmtPts(sc.submitted)} · 同分按课堂表现与连击排序</p>
       <a class="cta" href="#/me">查我的成绩 ${ICON.arrow}</a>
     </footer>`;
   }
@@ -986,8 +1040,8 @@
     return `<div class="trow${cls}${me}">
       <span class="rk">${place}</span>
       <span class="tid">${esc(s.id)}</span>
-      <span class="tot">${s.total}</span>
-      <span class="num col-hw">${s.hwPts}</span>
+      <span class="tot">${fmtPts(s.total)}</span>
+      <span class="num col-hw">${fmtPts(s.hwPts)}</span>
       <span class="num col-cls">${s.classPts}</span>
       <span class="st${s.streak ? '' : ' zero'}">${s.streak ? `${ICON.flame}${s.streak} 连` : '—'}</span>
     </div>`;
@@ -1021,10 +1075,20 @@
     const total = s.total;
     const hwPct = total > 0 ? Math.round((s.hwPts / total) * 100) : 0;
     const hwTotal = cmp.hwTotal;
-    const recent = s.recent.length
-      ? s.recent.map((h) => `<div class="rc ${h.ok ? 'ok' : 'no'}" title="${esc(h.date)} · ${esc(h.title)}">
-          <span class="dot">${h.ok ? ICON.check : ICON.x}</span><span>${fmtMD(h.date)}</span>
-        </div>`).join('')
+    const sc = state.settings.gradeScale;
+    const history = s.history.slice().reverse();
+    const historyRows = history.length
+      ? history.map((h) => {
+          const g = gradeLabelForPoints(sc, h.points);
+          const b = gradeBucket(sc, h.points);
+          const score = h.points > 0
+            ? `<span class="hwh-score ${b}">${esc(g)} <i>${fmtPts(h.points)} 分</i></span>`
+            : '<span class="hwh-score none">未交</span>';
+          return `<div class="hwh-row">
+            <span class="hwh-name"><b>${fmtMD(h.date)}</b>${esc(h.title)}</span>
+            ${score}
+          </div>`;
+        }).join('')
       : '<div class="empty-line">还没有作业记录</div>';
     const streakBadge = s.streak > 0 ? `<span class="badge gold">${ICON.flame}${s.streak} 连</span>` : '';
     return `<section class="me-card">
@@ -1036,12 +1100,12 @@
         </div>
         <div class="mh-side">
           <div class="mh-label">总积分</div>
-          <div class="mh-total"><b>${s.total}</b><i>分</i></div>
+          <div class="mh-total"><b>${fmtPts(s.total)}</b><i>分</i></div>
           <div class="mh-rank">总榜第 <b>${s.totalRank}</b> 名 / ${cmp.rows.length} 人</div>
         </div>
       </div>
       <div class="split-box">
-        <div class="split-head"><span>作业 <b>${s.hwPts}</b> 分</span><span>课堂 <b>${s.classPts}</b> 分</span></div>
+        <div class="split-head"><span>作业 <b>${fmtPts(s.hwPts)}</b> 分</span><span>课堂 <b>${fmtPts(s.classPts)}</b> 分</span></div>
         <div class="split">${total > 0 ? `<i class="s-hw" style="width:${hwPct}%"></i><i class="s-cls" style="width:${100 - hwPct}%"></i>` : ''}</div>
         <div class="split-legend"><span><i class="hw"></i>作业积分</span><span><i class="cls"></i>课堂表现</span></div>
       </div>
@@ -1051,9 +1115,10 @@
         <div class="stat"><span>作业提交率</span><b>${hwTotal ? pct(s.rate) : '—'}</b><small>${s.hwCount} / ${hwTotal} 次</small></div>
         <div class="stat"><span>课堂发言</span><b>${s.classCount}</b><i>次</i><small>+${s.classPts} 分</small></div>
       </div>
-      <div class="recent-box">
-        <h3>最近作业 · 新 → 旧</h3>
-        <div class="recent-list">${recent}</div>
+      <div class="hw-history-box">
+        <div class="hwh-head"><h3>历次作业成绩</h3><span class="hwh-count">共 ${history.length} 次</span></div>
+        <div class="hwh-legend">A+ ${fmtPts(sc.aplus)} 分 · A ${fmtPts(sc.a)} 分 · A- ${fmtPts(sc.aminus)} 分 · 其它 ${fmtPts(sc.submitted)} 分</div>
+        <div class="hwh-list">${historyRows}</div>
       </div>
       <div class="motivate">${ICON.spark}${motivation(s)}</div>
     </section>`;
@@ -1067,14 +1132,14 @@
     if (above) {
       const gap = above.total - s.total;
       msg = gap > 0
-        ? `距离第 ${s.totalRank - 1} 名（${esc(above.id)} 号）还差 <b>${gap}</b> 分。`
+        ? `距离第 ${s.totalRank - 1} 名（${esc(above.id)} 号）还差 <b>${fmtPts(gap)}</b> 分。`
         : `与第 ${s.totalRank - 1} 名（${esc(above.id)} 号）同分，下一次作业就能反超。`;
     }
     if (s.hwRank > 5) {
       const fifth = cmp.hwSorted[4];
       const gap5 = fifth ? fifth.hwPts - s.hwPts : 0;
-      if (gap5 > 0 && gap5 <= Math.max(1, state.settings.homeworkPoints)) {
-        msg += ' 再完成 <b>1</b> 次作业就能进入作业榜前五。';
+      if (gap5 > 0 && gap5 <= Math.max(1, state.settings.gradeScale.aplus)) {
+        msg += ' 再拿一次 <b>A+</b> 就能进入作业榜前五。';
       }
     }
     return msg;
@@ -1380,10 +1445,9 @@
       <div class="admin-grid">
         ${connectedPanel()}
         ${scorePanel()}
+        ${classHistoryPanel()}
         ${importPanel()}
         ${starsPanel()}
-        ${hwHistoryPanel()}
-        ${classHistoryPanel()}
         ${settingsPanel()}
         ${dataPanel()}
       </div>
@@ -1511,33 +1575,133 @@
   }
 
   function importPanel() {
-    return `<section class="panel" id="admin-import">
-      <div class="panel-head"><h2>${ICON.clipboard} 导入作业</h2><span class="sub">批改完后导入一次</span></div>
+    return `<section class="panel wide" id="admin-import">
+      <div class="panel-head"><h2>${ICON.clipboard} 导入作业</h2><span class="sub">按等级给每个学生打分</span></div>
       <form class="connect-form" id="hwForm" autocomplete="off" novalidate>
         <div class="row2">
           <label class="field"><span>日期</span><input class="input" type="date" name="date" id="hwDate" required></label>
-          <label class="field"><span>每次得分</span><input class="input" type="number" name="points" id="hwPoints" min="0" max="100" step="1" required></label>
+          <label class="field"><span>作业名称 <span class="sub">（留空自动命名）</span></span>
+            <input class="input" name="title" id="hwTitle" placeholder="" maxlength="40" autocomplete="off">
+          </label>
         </div>
-        <label class="field"><span>作业名称 <span class="sub">（留空自动命名）</span></span>
-          <input class="input" name="title" id="hwTitle" placeholder="" maxlength="40" autocomplete="off">
-        </label>
-        <label class="field"><span>登记方式</span>
-          <select class="input" name="mode" id="hwMode">
-            <option value="missing">默认全员已交，只登记未交</option>
-            <option value="done">只登记已交</option>
-          </select>
-        </label>
-        <label class="field"><span>学号 <span class="sub">（空格、逗号或换行分隔）</span></span>
-          <textarea class="input" name="ids" id="hwIds" rows="3" placeholder="例如：05 12 33" spellcheck="false"></textarea>
-        </label>
-        <div class="preview" id="hwPreview"></div>
-        <div class="form-actions">
-          <button class="btn small ghost" type="button" data-act="hw-clear">清空</button>
+        <div class="grade-legend" id="gradeLegend">${gradeLegendHtml()}</div>
+        <div class="grade-tools">
+          <button class="btn small" type="button" data-act="hw-all" data-grade="a">全班设为 A</button>
+          <button class="btn small ghost" type="button" data-act="hw-all" data-grade="aplus">全班 A+</button>
+          <button class="btn small ghost" type="button" data-act="hw-all" data-grade="none">全部未交</button>
           <span class="grow"></span>
-          <button class="btn primary" type="submit" id="hwSubmit">确认导入</button>
+          <label class="field" style="min-width:190px"><span>载入已有作业</span>
+            <select class="input" id="hwLoadSelect"><option value="">— 新作业 —</option>${hwLoadOptions()}</select>
+          </label>
+        </div>
+        <div class="grade-grid" id="gradeGrid"></div>
+        <div class="preview" id="hwPreview"></div>
+        <div class="form-actions grade-savebar">
+          <span class="grow"></span>
+          <button class="btn primary" type="submit" id="hwSubmit">保存本次作业</button>
         </div>
       </form>
+      <div class="sep" id="admin-log" style="scroll-margin-top:90px"></div>
+      <div class="panel-head" style="margin-bottom:8px"><h2 style="font-size:14px">最近作业</h2><span class="sub" id="hwCount">${state.homework.length} 次</span></div>
+      <div class="log-list" id="hwLogList"></div>
     </section>`;
+  }
+
+  function hwLoadOptions() {
+    return state.homework.slice().sort(hwCompare).reverse().map((h) =>
+      `<option value="${esc(h.id)}">${esc(h.date)} · ${esc(h.title)}</option>`).join('');
+  }
+
+  function gradeLegendHtml() {
+    const sc = state.settings.gradeScale;
+    return GRADE_DEFS.slice(0, 4).map((g) =>
+      `<span class="gl-item ${g.key}"><b>${g.label}</b>${fmtPts(sc[g.key])} 分</span>`).join('') +
+      '<span class="gl-item none"><b>未交</b>0 分</span>';
+  }
+
+  function renderHwLoadOptions() {
+    const sel = $('#hwLoadSelect');
+    if (!sel) return;
+    sel.innerHTML = `<option value="">— 新作业 —</option>${hwLoadOptions()}`;
+  }
+
+  function initGradeDraft() {
+    gradeDraft = {};
+    for (const id of state.students) gradeDraft[id] = 'none';
+    gradeEditingId = '';
+  }
+
+  function gradeRow(id) {
+    const current = gradeDraft[id] || 'none';
+    const btns = GRADE_DEFS.map((g) =>
+      `<button type="button" class="gbtn ${g.key}${current === g.key ? ' on' : ''}" data-act="hw-grade" data-id="${esc(id)}" data-grade="${g.key}">${g.label}</button>`).join('');
+    return `<div class="grade-row" data-row="${esc(id)}"><span class="gr-id">${esc(id)}</span><div class="gr-btns">${btns}</div></div>`;
+  }
+
+  function renderGradeGrid() {
+    const grid = $('#gradeGrid');
+    if (!grid) return;
+    grid.innerHTML = state.students.map((id) => gradeRow(id)).join('');
+  }
+
+  function setGrade(id, key) {
+    if (!state.students.includes(id)) return;
+    gradeDraft[id] = key;
+    const row = $$('#gradeGrid .grade-row').find((r) => r.dataset.row === id);
+    if (row) {
+      $$('.gbtn', row).forEach((b) => b.classList.toggle('on', b.dataset.grade === key));
+    }
+    renderGradeSummary();
+  }
+
+  function setAllGrades(key) {
+    for (const id of state.students) gradeDraft[id] = key;
+    renderGradeGrid();
+    renderGradeSummary();
+  }
+
+  function renderGradeSummary() {
+    const box = $('#hwPreview');
+    if (!box) return;
+    const counts = { aplus: 0, a: 0, aminus: 0, submitted: 0, none: 0 };
+    for (const id of state.students) {
+      const key = gradeDraft[id] || 'none';
+      counts[key] = (counts[key] || 0) + 1;
+    }
+    const total = state.students.length || 1;
+    const submitted = counts.aplus + counts.a + counts.aminus + counts.submitted;
+    const seg = (key) => `<i class="${key}" style="width:${((counts[key] / total) * 100).toFixed(2)}%"></i>`;
+    box.innerHTML = `<div class="grade-bar">${seg('aplus')}${seg('a')}${seg('aminus')}${seg('submitted')}${seg('none')}</div>
+      <div class="grade-sum">已交 <b>${submitted}</b> / ${state.students.length} 人 · ` +
+      `<span class="gp aplus">A+ ${counts.aplus}</span> · <span class="gp a">A ${counts.a}</span> · ` +
+      `<span class="gp aminus">A- ${counts.aminus}</span> · <span class="gp submitted">提交 ${counts.submitted}</span> · ` +
+      `<span class="gp none">未交 ${counts.none}</span></div>`;
+  }
+
+  function gradeKeyForPoints(pts) {
+    const sc = state.settings.gradeScale;
+    if (!pts || pts <= 0) return 'none';
+    for (const g of GRADE_DEFS) {
+      if (g.key === 'none') continue;
+      if (Math.abs(sc[g.key] - pts) < 1e-9) return g.key;
+    }
+    return 'submitted';
+  }
+
+  function loadHomeworkToDraft(id) {
+    const hw = state.homework.find((h) => h.id === id);
+    if (!hw) return;
+    for (const sid of state.students) {
+      gradeDraft[sid] = gradeKeyForPoints(Number((hw.scores || {})[sid]) || 0);
+    }
+    gradeEditingId = hw.id;
+    const dateEl = $('#hwDate');
+    if (dateEl) dateEl.value = hw.date;
+    const titleEl = $('#hwTitle');
+    if (titleEl) titleEl.value = hw.title;
+    renderGradeGrid();
+    renderGradeSummary();
+    toast(`已载入「${hw.title}」，修改后保存会覆盖`, 'ok');
   }
 
   function starsPanel() {
@@ -1578,13 +1742,6 @@
     </div>`).join('');
   }
 
-  function hwHistoryPanel() {
-    return `<section class="panel" id="admin-log">
-      <div class="panel-head"><h2>作业记录</h2><span class="sub" id="hwCount">${state.homework.length} 次</span></div>
-      <div class="log-list" id="hwLogList"></div>
-    </section>`;
-  }
-
   function classHistoryPanel() {
     return `<section class="panel">
       <div class="panel-head"><h2>课堂加减分记录</h2><span class="sub" id="classCount">${state.classLog.length} 条</span></div>
@@ -1600,9 +1757,14 @@
           <label class="field"><span>班级名称</span><input class="input" name="className" value="${esc(state.meta.className)}" maxlength="24"></label>
           <label class="field"><span>学期说明（显示在榜单顶部）</span><input class="input" name="term" value="${esc(state.meta.term)}" maxlength="30" placeholder="如：2026 秋季学期"></label>
         </div>
+        <label class="field"><span>作业等级分数 <span class="sub">（导入作业时按这个换算）</span></span>
+          <div class="grade-scale">
+            ${GRADE_DEFS.slice(0, 4).map((g) => `<label class="gs-item ${g.key}"><b>${g.label}</b><input class="input" type="number" name="g_${g.key}" min="0" max="100" step="0.5" value="${fmtPts(state.settings.gradeScale[g.key])}"></label>`).join('')}
+          </div>
+        </label>
         <div class="row2">
-          <label class="field"><span>每次作业默认分</span><input class="input" type="number" name="homeworkPoints" min="0" max="100" value="${state.settings.homeworkPoints}"></label>
           <label class="field"><span>课堂加分默认值</span><input class="input" type="number" name="classPoints" min="0" max="100" value="${state.settings.classPoints}"></label>
+          <span></span>
         </div>
         <div class="form-actions"><span class="grow"></span><button class="btn primary" type="submit">保存设置</button></div>
       </form>
@@ -1635,16 +1797,16 @@
   function initAdmin() {
     if (!canWrite() || connEditing) return;
     const date = $('#hwDate');
-    if (date && !date.value) date.value = todayISO();
-    const points = $('#hwPoints');
-    if (points && !points.value) points.value = state.settings.homeworkPoints;
+    if (date) date.value = todayISO();
     const title = $('#hwTitle');
     if (title) title.placeholder = `第 ${state.homework.length + 1} 次作业`;
     const sd = $('#starsDate');
     if (sd && !sd.value) sd.value = todayISO();
+    initGradeDraft();
+    renderGradeGrid();
+    renderGradeSummary();
     renderIdGrid(true);
     refreshAdmin();
-    updateHwPreview();
     updateStarsPreview();
   }
 
@@ -1664,6 +1826,8 @@
     renderClassLog();
     renderClassToday();
     renderStarsAdmin();
+    const gl = $('#gradeLegend');
+    if (gl) gl.innerHTML = gradeLegendHtml();
     const dot = $('#admin-connect .dot');
     if (dot) dot.className = `dot ${apiIssue ? 'bad' : 'ok'}`;
   }
@@ -1693,6 +1857,20 @@
     setTimeout(() => btn.classList.remove('pop'), 500);
   }
 
+  function gradeDist(hw) {
+    const sc = state.settings.gradeScale;
+    const d = { aplus: 0, a: 0, aminus: 0, submitted: 0, none: 0 };
+    for (const id of state.students) {
+      const p = Number((hw.scores || {})[id]) || 0;
+      if (p <= 0) d.none += 1;
+      else if (Math.abs(p - sc.aplus) < 1e-9) d.aplus += 1;
+      else if (Math.abs(p - sc.a) < 1e-9) d.a += 1;
+      else if (Math.abs(p - sc.aminus) < 1e-9) d.aminus += 1;
+      else d.submitted += 1;
+    }
+    return d;
+  }
+
   function renderHwLog() {
     const list = $('#hwLogList');
     if (!list) return;
@@ -1702,10 +1880,11 @@
       return;
     }
     list.innerHTML = hw.map((h) => {
-      const done = h.completed.filter((id) => cmp.byId.has(id)).length;
+      const d = gradeDist(h);
+      const submitted = d.aplus + d.a + d.aminus + d.submitted;
       return `<div class="log-item">
         <span class="lid">${fmtMD(h.date)}</span>
-        <div class="lmain"><div class="lt">${esc(h.title)}</div><div class="ls">${done} / ${state.students.length} 人 · 每人 +${h.points} 分</div></div>
+        <div class="lmain"><div class="lt">${esc(h.title)}</div><div class="ls">${submitted} / ${state.students.length} 人提交 · A+ ${d.aplus} · A ${d.a} · A- ${d.aminus} · 提交 ${d.submitted}</div></div>
         <button class="x" type="button" data-act="hw-del" data-id="${esc(h.id)}" title="删除这次作业" aria-label="删除 ${esc(h.title)}">${ICON.trash}</button>
       </div>`;
     }).join('');
@@ -1733,27 +1912,6 @@
     const pts = cmp.rows.reduce((a, s) => a + s.todayPts, 0);
     const cnt = cmp.rows.reduce((a, s) => a + s.todayCount, 0);
     box.innerHTML = `今日已加 <b>${pts}</b> 分 · ${cnt} 次`;
-  }
-
-  function updateHwPreview() {
-    const box = $('#hwPreview');
-    if (!box) return;
-    const idsText = $('#hwIds') ? $('#hwIds').value : '';
-    const mode = $('#hwMode') ? $('#hwMode').value : 'missing';
-    const parsed = parseIds(idsText, state.students);
-    if (parsed.unknown.length) {
-      box.innerHTML = `<span class="miss">不在名单里：${parsed.unknown.map(esc).join('、')}</span>，请检查学号。`;
-      return;
-    }
-    const done = mode === 'missing'
-      ? state.students.length - parsed.ids.length
-      : parsed.ids.length;
-    const missing = state.students.length - done;
-    let html = `本次已交 <b>${done}</b> / ${state.students.length} 人 · 未交 <b class="${missing ? 'miss' : 'ok'}">${missing}</b> 人`;
-    if (mode === 'missing' && parsed.ids.length) {
-      html += `<div class="chips">未交：${parsed.ids.map((id) => `<span class="chip">${esc(id)}</span>`).join('')}</div>`;
-    }
-    box.innerHTML = html;
   }
 
   /* ============================================================
@@ -1813,36 +1971,26 @@
     if (!confirm(`删除「${hw.date} ${hw.title}」？\n所有学生的作业积分和连击会重新计算，此操作会立即写入 GitHub。`)) return;
     if (!commit({ t: 'hw.del', id }, { immediate: true })) return;
     renderIdGrid(true);
+    renderHwLoadOptions();
     toast('已删除这次作业', 'ok');
   }
 
-  function importHomework(form) {
+  function saveHomework(form) {
     const date = form.date.value;
-    const points = clamp(Math.round(num(form.points.value, state.settings.homeworkPoints)), 0, 1000);
-    const mode = form.mode.value;
-    const titleInput = fieldValue(form, 'title').trim();
-    const autoTitle = `第 ${state.homework.length + 1} 次作业`;
-    const title = titleInput || autoTitle;
     if (!date) { toast('请选择作业日期', 'bad'); return; }
-    const parsed = parseIds(form.ids.value, state.students);
-    if (parsed.unknown.length) {
-      toast(`学号不在名单：${parsed.unknown.join('、')}`, 'bad');
-      return;
+    const title = fieldValue(form, 'title').trim() || `第 ${state.homework.length + 1} 次作业`;
+    const sc = state.settings.gradeScale;
+    const scores = {};
+    for (const id of state.students) {
+      const pts = gradePoints(sc, gradeDraft[id] || 'none');
+      if (pts > 0) scores[id] = pts;
     }
-    let completed;
-    if (mode === 'missing') {
-      completed = state.students.filter((id) => !parsed.ids.includes(id));
-    } else {
-      completed = parsed.ids.slice();
-      if (!completed.length && !confirm('这次作业 0 人完成？') ) return;
-    }
-    if (mode === 'missing' && parsed.ids.length === state.students.length) {
-      if (!confirm('全体都没交？确认要这样记录吗？')) return;
-    }
+    const submitted = Object.keys(scores).length;
+    if (!submitted && !confirm('这次作业 0 人提交？确认保存吗？')) return;
     const sameDate = state.homework.filter((h) => h.date === date);
     const exact = sameDate.find((h) => h.title === title);
     if (exact) {
-      if (!confirm(`「${title}」（${date}）已经存在，覆盖这一次的完成情况？`)) return;
+      if (!confirm(`「${title}」（${date}）已经存在，覆盖这一次的评分？`)) return;
     } else if (sameDate.length) {
       if (!confirm(`${date} 已经有 ${sameDate.length} 次作业，仍要再新增一次「${title}」吗？`)) return;
     }
@@ -1850,19 +1998,20 @@
       id: exact ? exact.id : makeId('hw'),
       date,
       title,
-      points,
-      completed,
+      scores,
       createdAt: exact ? exact.createdAt : nowISO(),
     };
     if (!commit({ t: 'hw.upsert', hw }, { immediate: true })) return;
-    form.ids.value = '';
     const titleEl = form.elements.namedItem('title');
     if (titleEl) {
       titleEl.value = '';
       titleEl.placeholder = `第 ${state.homework.length + 1} 次作业`;
     }
-    updateHwPreview();
-    toast(`已导入「${title}」：${completed.length} 人完成，每人 +${points} 分`, 'ok');
+    initGradeDraft();
+    renderGradeGrid();
+    renderGradeSummary();
+    renderHwLoadOptions();
+    toast(`已保存「${title}」：${submitted} 人提交`, 'ok');
   }
 
   async function connect(form) {
@@ -1935,8 +2084,14 @@
       term: fieldValue(form, 'term').trim(),
     };
     const settings = {
-      homeworkPoints: clamp(Math.round(num(form.homeworkPoints.value, state.settings.homeworkPoints)), 0, 1000),
-      classPoints: clamp(Math.round(num(form.classPoints.value, state.settings.classPoints)), 0, 1000),
+      homeworkPoints: state.settings.homeworkPoints,
+      classPoints: clamp(Math.round(num(fieldValue(form, 'classPoints'), state.settings.classPoints)), 0, 1000),
+      gradeScale: normalizeScale({
+        aplus: num(fieldValue(form, 'g_aplus'), 3),
+        a: num(fieldValue(form, 'g_a'), 2),
+        aminus: num(fieldValue(form, 'g_aminus'), 1),
+        submitted: num(fieldValue(form, 'g_submitted'), 0.5),
+      }),
     };
     if (!commit({ t: 'config.set', meta, settings }, { immediate: true })) return;
     toast('设置已保存', 'ok');
@@ -1949,6 +2104,11 @@
     if (!commit({ t: 'roster.set', students: ids }, { immediate: true })) return;
     scoreAmt = clamp(Math.round(state.settings.classPoints) || 1, 1, 3);
     renderIdGrid(true);
+    const nextDraft = {};
+    for (const sid of state.students) nextDraft[sid] = gradeDraft[sid] || 'none';
+    gradeDraft = nextDraft;
+    renderGradeGrid();
+    renderGradeSummary();
     const count = $('#rosterCount');
     if (count) count.textContent = String(state.students.length);
     toast(`名单已更新为 ${ids.length} 人`, 'ok');
@@ -1963,8 +2123,10 @@
   }
 
   function formResetSafe() {
-    const ids = $('#hwIds'); if (ids) ids.value = '';
-    updateHwPreview();
+    initGradeDraft();
+    renderGradeGrid();
+    renderGradeSummary();
+    renderHwLoadOptions();
   }
 
   function saveStars(form) {
@@ -2146,7 +2308,7 @@
     }
     if (form.id === 'hwForm') {
       e.preventDefault();
-      importHomework(form);
+      saveHomework(form);
       return;
     }
     if (form.id === 'settingsForm') {
@@ -2174,10 +2336,12 @@
     const target = e.target.closest('[data-act]');
     if (!target) return;
     const act = target.dataset.act;
-    if (act === 'hw-clear') {
-      const ids = $('#hwIds');
-      if (ids) ids.value = '';
-      updateHwPreview();
+    if (act === 'hw-grade') {
+      setGrade(target.dataset.id, target.dataset.grade);
+      return;
+    }
+    if (act === 'hw-all') {
+      setAllGrades(target.dataset.grade);
       return;
     }
     if (act === 'class-add') {
@@ -2250,8 +2414,8 @@
   function onChange(e) {
     const t = e.target;
     if (!t) return;
-    if (t.id === 'hwMode' || t.id === 'hwDate' || t.id === 'hwPoints' || t.id === 'hwTitle') {
-      updateHwPreview();
+    if (t.id === 'hwLoadSelect') {
+      if (t.value) loadHomeworkToDraft(t.value);
       return;
     }
     if (t.id === 'starsType' || t.id === 'starsDate') {
@@ -2272,9 +2436,6 @@
 
   function onInput(e) {
     const t = e.target;
-    if (t && (t.id === 'hwIds' || t.id === 'hwMode' || t.id === 'hwTitle' || t.id === 'hwDate')) {
-      updateHwPreview();
-    }
     if (t && t.id === 'starsIds') {
       updateStarsPreview();
     }
